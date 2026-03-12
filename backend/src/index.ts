@@ -6,6 +6,7 @@ import OpenAI from 'openai';
 import { store } from './store';
 import { runAgent } from './agent';
 import { Mission } from './types';
+import { phoneBridge } from './phone-bridge';
 
 const groq = new OpenAI({
   apiKey: process.env.GROQ_API_KEY,
@@ -136,6 +137,36 @@ Respond ONLY with a raw JSON object (no markdown, no code fences):
     console.error('Suggest endpoint error:', err);
     return res.status(500).json({ error: err instanceof Error ? err.message : 'Internal server error' });
   }
+});
+
+// ─── Phone bridge: iPhone app connects here to receive shortcut commands ───────
+app.get('/api/phone/events', (req, res) => {
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.setHeader('X-Accel-Buffering', 'no');
+  res.flushHeaders();
+
+  // Confirm connection
+  res.write(`data: ${JSON.stringify({ type: 'connected' })}\n\n`);
+
+  phoneBridge.addClient(res);
+  console.log(`📱 Phone connected (${phoneBridge.clientCount()} total)`);
+
+  // Keep-alive ping every 20 s
+  const keepAlive = setInterval(() => {
+    try { res.write(': ping\n\n'); } catch { clearInterval(keepAlive); }
+  }, 20000);
+
+  req.on('close', () => {
+    clearInterval(keepAlive);
+    console.log(`📱 Phone disconnected (${phoneBridge.clientCount()} remaining)`);
+  });
+});
+
+// ─── Phone status: quick check for the UI ────────────────────────────────────
+app.get('/api/phone/status', (_req, res) => {
+  res.json({ connected: phoneBridge.isConnected(), clients: phoneBridge.clientCount() });
 });
 
 app.listen(PORT, () => {
