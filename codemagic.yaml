@@ -43,26 +43,20 @@ workflows:
             -destination "generic/platform=iOS" \
             -archivePath $CM_BUILD_DIR/App.xcarchive \
             archive \
-            CODE_SIGN_STYLE=Automatic \
-            DEVELOPMENT_TEAM=$APPLE_TEAM_ID
-      - name: Export IPA
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            DEVELOPMENT_TEAM=""
+      - name: Export IPA (unsigned)
         script: |
-          xcodebuild \
-            -exportArchive \
-            -archivePath $CM_BUILD_DIR/App.xcarchive \
-            -exportPath $CM_BUILD_DIR/ipa \
-            -exportOptionsPlist /dev/stdin <<EOF
-          <?xml version="1.0" encoding="UTF-8"?>
-          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-          <plist version="1.0">
-          <dict>
-            <key>method</key>
-            <string>development</string>
-            <key>teamID</key>
-            <string>$APPLE_TEAM_ID</string>
-          </dict>
-          </plist>
-          EOF
+          mkdir -p $CM_BUILD_DIR/ipa
+          cd frontend/ios/App
+          # Package the app payload into an unsigned IPA for AltStore re-signing
+          mkdir -p /tmp/Payload
+          APP_PATH=$(find $CM_BUILD_DIR/App.xcarchive/Products -name "*.app" | head -1)
+          cp -r "$APP_PATH" /tmp/Payload/
+          cd /tmp && zip -r $CM_BUILD_DIR/ipa/AgentFit.ipa Payload
+          echo "IPA created at $CM_BUILD_DIR/ipa/AgentFit.ipa"
     artifacts:
       - $CM_BUILD_DIR/App.xcarchive
       - $CM_BUILD_DIR/ipa/*.ipa
