@@ -75,12 +75,11 @@ const APP_SCHEMES: Record<string, string> = {
 };
 
 // ─── Navigate to an iOS URL scheme from WKWebView ─────────────────────────────
+// For custom schemes (whatsapp://, tel://, etc.) Capacitor's WKWebView
+// navigation delegate intercepts the request, calls UIApplication.open(),
+// and cancels the navigation — so the app stays open and the target app launches.
 function openScheme(url: string) {
-  const a = document.createElement('a');
-  a.href = url;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
+  window.location.href = url;
 }
 
 // ─── Handle phone_action commands from the agent ──────────────────────────────
@@ -102,7 +101,7 @@ function handlePhoneAction(cmd: PhoneActionCmd): string {
   switch (cmd.action) {
     case 'whatsapp': {
       const phone = (cmd.phone ?? '').replace(/^\+/, '');
-      openScheme(`https://wa.me/${phone}?text=${e(cmd.message ?? '')}`);
+      openScheme(`whatsapp://send?phone=${phone}&text=${e(cmd.message ?? '')}`);
       return `Opening WhatsApp → ${cmd.phone}`;
     }
     case 'call':
