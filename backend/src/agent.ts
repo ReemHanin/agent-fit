@@ -1,43 +1,52 @@
 import OpenAI from 'openai';
 import { v4 as uuidv4 } from 'uuid';
 import { store } from './store';
-import { webSearch, fetchUrl, runIosShortcut } from './tool-handlers';
+import {
+  webSearch,
+  fetchUrl,
+  openWhatsApp,
+  makeCall,
+  sendSms,
+  openEmail,
+  openMaps,
+  openApp,
+  openUrl,
+} from './tool-handlers';
 
 const client = new OpenAI({
   apiKey: process.env.GROQ_API_KEY,
   baseURL: 'https://api.groq.com/openai/v1',
 });
 
-const SYSTEM_PROMPT = `You are an autonomous AI agent executing missions on behalf of the user. You have REAL tools — use them to actually accomplish tasks.
+const SYSTEM_PROMPT = `You are an autonomous AI agent that executes missions on behalf of the user. You have REAL tools — use them to actually do things.
 
-Available tools:
-- notify_user: send progress updates to the user (required at every step)
-- web_search: search the internet for real, up-to-date information
-- fetch_url: read the full content of any web page
-- run_ios_shortcut: trigger an iOS Shortcut on the user's iPhone to control apps
+You can control the user's iPhone directly (no Shortcuts setup needed):
+- open_whatsapp — open WhatsApp with a pre-filled message (user taps Send)
+- make_call — initiate a phone call
+- send_sms — open Messages with pre-filled SMS
+- open_email — open Mail with pre-filled email
+- open_maps — open Maps with directions
+- open_app — open any app (Spotify, Instagram, YouTube, TikTok, Telegram, etc.)
+- open_url — open any URL in Safari
 
-iOS Shortcut control — the user has set up Shortcuts on their iPhone:
-- "AgentSendWhatsApp" — input: "ContactName: message text"
-- "AgentSendSMS"      — input: "ContactName: message text"
-- "AgentMakeCall"     — input: phone number or contact name
-- "AgentOpenApp"      — input: app name (e.g. "Spotify", "Camera", "Maps")
-- "AgentSetAlarm"     — input: time string (e.g. "7:30 AM")
-- "AgentSetReminder"  — input: "Task at Time" (e.g. "Buy milk at 3pm")
-- "AgentPlayMusic"    — input: song or playlist name
-- "AgentSendEmail"    — input: "to@email.com: subject: body"
+You can also search and read the web:
+- web_search — search DuckDuckGo for real-time information
+- fetch_url — read the full content of any web page
 
-When given a mission:
-1. Immediately notify_user (stage: starting) with what you plan to do
-2. Use web_search / fetch_url to gather real information when needed
-3. Use run_ios_shortcut to take real actions on the phone
-4. Send progress updates (notify_user) after each major step
-5. When fully done, call notify_user with is_complete=true and a complete summary
+Mission execution rules:
+1. Start with notify_user (stage: starting) explaining your plan
+2. Use web_search / fetch_url for any information you need
+3. Use the phone tools to take real actions on the iPhone
+4. Send notify_user updates after each major step
+5. End with notify_user (is_complete: true) with a full summary
 
-Rules:
-- NEVER pretend to do something — use the real tools
-- If a shortcut isn't responding, tell the user and explain what they need to do manually
-- Keep progress updates concise (1-2 sentences), final report detailed
-- Use emojis: 🔍 research, 📋 planning, ⚡ executing, ✅ done`;
+Important:
+- NEVER pretend to do something — always use the real tools
+- For WhatsApp/SMS/email: the app opens pre-filled, user taps Send (this is by design for safety)
+- For calls: iOS shows a confirmation dialog before dialing
+- If the phone is not connected, tell the user to open Agent Fit on their iPhone
+- Keep progress updates brief (1-2 sentences); final report can be detailed
+- Use emojis: 🔍 researching, 📋 planning, ⚡ executing, ✅ done`;
 
 const tools: OpenAI.Chat.ChatCompletionTool[] = [
   {
@@ -48,19 +57,12 @@ const tools: OpenAI.Chat.ChatCompletionTool[] = [
       parameters: {
         type: 'object',
         properties: {
-          message: {
-            type: 'string',
-            description: 'The message to show the user. Be specific and informative.',
-          },
+          message: { type: 'string', description: 'Message to show the user.' },
           stage: {
             type: 'string',
             enum: ['starting', 'analyzing', 'researching', 'planning', 'executing', 'reviewing', 'completing'],
-            description: 'Current phase of the mission.',
           },
-          is_complete: {
-            type: 'boolean',
-            description: 'Set true ONLY when the entire mission is fully finished.',
-          },
+          is_complete: { type: 'boolean', description: 'True only when the whole mission is done.' },
         },
         required: ['message', 'stage', 'is_complete'],
       },
@@ -70,15 +72,10 @@ const tools: OpenAI.Chat.ChatCompletionTool[] = [
     type: 'function',
     function: {
       name: 'web_search',
-      description: 'Search the web for real-time information. Returns search snippets.',
+      description: 'Search the web for real-time information.',
       parameters: {
         type: 'object',
-        properties: {
-          query: {
-            type: 'string',
-            description: 'The search query.',
-          },
-        },
+        properties: { query: { type: 'string' } },
         required: ['query'],
       },
     },
@@ -87,15 +84,10 @@ const tools: OpenAI.Chat.ChatCompletionTool[] = [
     type: 'function',
     function: {
       name: 'fetch_url',
-      description: 'Fetch and read the text content of a web page URL.',
+      description: 'Fetch and read the text content of a web page.',
       parameters: {
         type: 'object',
-        properties: {
-          url: {
-            type: 'string',
-            description: 'Full URL to fetch (e.g. https://example.com/article).',
-          },
-        },
+        properties: { url: { type: 'string', description: 'Full URL to fetch.' } },
         required: ['url'],
       },
     },
@@ -103,24 +95,102 @@ const tools: OpenAI.Chat.ChatCompletionTool[] = [
   {
     type: 'function',
     function: {
-      name: 'run_ios_shortcut',
-      description:
-        'Run an iOS Shortcut on the user\'s iPhone. This actually controls the phone — sends WhatsApp messages, makes calls, opens apps, sets alarms, etc. The app must be open on the phone.',
+      name: 'open_whatsapp',
+      description: 'Open WhatsApp on the iPhone with a message pre-filled. Works without any Shortcuts setup. User just taps Send.',
       parameters: {
         type: 'object',
         properties: {
-          shortcut_name: {
-            type: 'string',
-            description:
-              'Exact name of the iOS Shortcut (e.g. "AgentSendWhatsApp", "AgentOpenApp", "AgentMakeCall").',
-          },
-          input: {
-            type: 'string',
-            description:
-              'Text input for the Shortcut. Messaging format: "ContactName: message". Calls: phone number. Apps: app name.',
-          },
+          phone_number: { type: 'string', description: 'Phone number in international format, e.g. +972501234567' },
+          message: { type: 'string', description: 'The message to pre-fill.' },
         },
-        required: ['shortcut_name', 'input'],
+        required: ['phone_number', 'message'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'make_call',
+      description: 'Initiate a phone call on the iPhone.',
+      parameters: {
+        type: 'object',
+        properties: {
+          phone_number: { type: 'string', description: 'Phone number to call.' },
+        },
+        required: ['phone_number'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'send_sms',
+      description: 'Open the Messages app on the iPhone with an SMS/iMessage pre-filled.',
+      parameters: {
+        type: 'object',
+        properties: {
+          phone_number: { type: 'string', description: 'Phone number.' },
+          message: { type: 'string', description: 'Message text.' },
+        },
+        required: ['phone_number', 'message'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'open_email',
+      description: 'Open the Mail app on the iPhone with an email pre-filled.',
+      parameters: {
+        type: 'object',
+        properties: {
+          to: { type: 'string', description: 'Recipient email address.' },
+          subject: { type: 'string', description: 'Email subject.' },
+          body: { type: 'string', description: 'Email body text.' },
+        },
+        required: ['to', 'subject', 'body'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'open_maps',
+      description: 'Open Apple Maps on the iPhone with directions to a destination.',
+      parameters: {
+        type: 'object',
+        properties: {
+          destination: { type: 'string', description: 'Destination address or place name.' },
+        },
+        required: ['destination'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'open_app',
+      description: 'Open any installed app on the iPhone by name. Works for Spotify, YouTube, Instagram, TikTok, Twitter/X, Telegram, WhatsApp, FaceTime, Netflix, Uber, Snapchat, Gmail, and many more.',
+      parameters: {
+        type: 'object',
+        properties: {
+          app_name: { type: 'string', description: 'Name of the app, e.g. "Spotify", "Instagram", "YouTube".' },
+        },
+        required: ['app_name'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'open_url',
+      description: 'Open any URL in Safari on the iPhone.',
+      parameters: {
+        type: 'object',
+        properties: {
+          url: { type: 'string', description: 'Full URL to open.' },
+        },
+        required: ['url'],
       },
     },
   },
@@ -130,14 +200,16 @@ const tools: OpenAI.Chat.ChatCompletionTool[] = [
 
 async function executeTool(name: string, args: Record<string, string>): Promise<string> {
   switch (name) {
-    case 'web_search':
-      return await webSearch(args.query ?? '');
-    case 'fetch_url':
-      return await fetchUrl(args.url ?? '');
-    case 'run_ios_shortcut':
-      return runIosShortcut(args.shortcut_name ?? '', args.input ?? '');
-    default:
-      return `Unknown tool: ${name}`;
+    case 'web_search':    return await webSearch(args.query ?? '');
+    case 'fetch_url':     return await fetchUrl(args.url ?? '');
+    case 'open_whatsapp': return openWhatsApp(args.phone_number ?? '', args.message ?? '');
+    case 'make_call':     return makeCall(args.phone_number ?? '');
+    case 'send_sms':      return sendSms(args.phone_number ?? '', args.message ?? '');
+    case 'open_email':    return openEmail(args.to ?? '', args.subject ?? '', args.body ?? '');
+    case 'open_maps':     return openMaps(args.destination ?? '');
+    case 'open_app':      return openApp(args.app_name ?? '');
+    case 'open_url':      return openUrl(args.url ?? '');
+    default:              return `Unknown tool: ${name}`;
   }
 }
 
@@ -187,38 +259,30 @@ export async function runAgent(missionId: string): Promise<void> {
       });
 
       const assistantMessage = response.choices[0].message;
-
-      // Append assistant turn to history
       messages.push(assistantMessage);
 
-      // Process all tool calls in this turn
       if (assistantMessage.tool_calls && assistantMessage.tool_calls.length > 0) {
         for (const toolCall of assistantMessage.tool_calls) {
           let toolResult: string;
 
           if (toolCall.function.name === 'notify_user') {
-            // notify_user is handled locally — never calls the network
             const input = JSON.parse(toolCall.function.arguments) as {
               message: string;
               stage: string;
               is_complete: boolean;
             };
-
             if (input.is_complete) {
               addMsg('result', input.message, input.stage);
               isComplete = true;
             } else {
               addMsg('progress', input.message, input.stage);
             }
-
             toolResult = 'Notification delivered.';
           } else {
-            // Real tool execution
             const args = JSON.parse(toolCall.function.arguments) as Record<string, string>;
             toolResult = await executeTool(toolCall.function.name, args);
           }
 
-          // Feed result back into conversation
           messages.push({
             role: 'tool',
             tool_call_id: toolCall.id,
@@ -227,7 +291,6 @@ export async function runAgent(missionId: string): Promise<void> {
         }
       }
 
-      // Model finished without calling complete — treat last text as result
       if (response.choices[0].finish_reason === 'stop' && !isComplete) {
         const text = assistantMessage.content?.trim() ?? '';
         addMsg('result', text || 'Mission completed.', 'completing');

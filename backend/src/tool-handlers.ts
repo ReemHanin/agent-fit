@@ -109,29 +109,88 @@ export async function fetchUrl(url: string): Promise<string> {
   }
 }
 
-// ─── Run iOS Shortcut ──────────────────────────────────────────────────────────
+// ─── Phone Actions (direct URL scheme — no Shortcuts needed) ──────────────────
 
 /**
- * Sends a command to the iPhone app via SSE to trigger an iOS Shortcut.
- * The app translates this into a `shortcuts://run-shortcut?name=...` URL.
- *
- * @param shortcutName  Exact name of the iOS Shortcut (e.g. "AgentSendWhatsApp")
- * @param input         Text passed as the shortcut's input (e.g. "Mom: I'll be late")
+ * Sends a phone_action command to the iPhone app via SSE.
+ * The app converts it into a native iOS URL scheme call.
  */
-export function runIosShortcut(shortcutName: string, input: string): string {
-  const connected = phoneBridge.send({
-    type: 'run_shortcut',
-    shortcut: shortcutName,
-    input: input ?? '',
-  });
-
+function sendPhoneAction(payload: Record<string, string>): string {
+  const connected = phoneBridge.send({ type: 'phone_action', ...payload });
   if (!connected) {
-    return (
-      '⚠️ Phone is not connected. ' +
-      'The Agent Fit app must be open on your iPhone to receive shortcut commands.'
-    );
+    return '⚠️ Phone not connected — open the Agent Fit app on your iPhone first.';
   }
+  return null as unknown as string; // caller returns its own success message
+}
 
-  return `✅ Shortcut "${shortcutName}" triggered on your iPhone` +
-    (input ? ` with input: "${input}"` : '') + '.';
+/**
+ * Open WhatsApp with a pre-filled message to a phone number.
+ * The user just taps Send — no Shortcuts needed.
+ * @param phoneNumber  International format, e.g. +972501234567 or 972501234567
+ * @param message      Message text
+ */
+export function openWhatsApp(phoneNumber: string, message: string): string {
+  // Strip non-digits except leading +
+  const phone = phoneNumber.replace(/[^\d+]/g, '').replace(/^\+/, '');
+  const err = sendPhoneAction({ action: 'whatsapp', phone, message });
+  if (err) return err;
+  return `✅ Opening WhatsApp on your iPhone → message to ${phoneNumber} pre-filled. Tap Send to deliver it.`;
+}
+
+/**
+ * Initiate a phone call (shows call confirmation dialog on iPhone).
+ */
+export function makeCall(phoneNumber: string): string {
+  const phone = phoneNumber.replace(/\s/g, '');
+  const err = sendPhoneAction({ action: 'call', phone });
+  if (err) return err;
+  return `✅ Initiating call to ${phoneNumber} on your iPhone.`;
+}
+
+/**
+ * Open iMessage/SMS with a pre-filled message.
+ */
+export function sendSms(phoneNumber: string, message: string): string {
+  const phone = phoneNumber.replace(/\s/g, '');
+  const err = sendPhoneAction({ action: 'sms', phone, message });
+  if (err) return err;
+  return `✅ Opening Messages on your iPhone → SMS to ${phoneNumber} pre-filled. Tap Send to deliver it.`;
+}
+
+/**
+ * Open the Mail app with a pre-filled email.
+ */
+export function openEmail(to: string, subject: string, body: string): string {
+  const err = sendPhoneAction({ action: 'email', to, subject, body });
+  if (err) return err;
+  return `✅ Opening Mail on your iPhone → email to ${to} pre-filled. Tap Send to deliver it.`;
+}
+
+/**
+ * Open Apple Maps with directions to a destination.
+ */
+export function openMaps(destination: string): string {
+  const err = sendPhoneAction({ action: 'maps', destination });
+  if (err) return err;
+  return `✅ Opening Maps on your iPhone → directions to "${destination}".`;
+}
+
+/**
+ * Open any installed app by name.
+ * Supports: Spotify, YouTube, Instagram, Twitter/X, TikTok, Telegram,
+ *           WhatsApp, FaceTime, Gmail, Snapchat, Netflix, Uber, and more.
+ */
+export function openApp(appName: string): string {
+  const err = sendPhoneAction({ action: 'open_app', app: appName });
+  if (err) return err;
+  return `✅ Opening ${appName} on your iPhone.`;
+}
+
+/**
+ * Open any URL in Safari.
+ */
+export function openUrl(url: string): string {
+  const err = sendPhoneAction({ action: 'open_url', url });
+  if (err) return err;
+  return `✅ Opening ${url} in Safari on your iPhone.`;
 }

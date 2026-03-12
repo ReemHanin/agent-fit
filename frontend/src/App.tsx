@@ -3,22 +3,98 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { Home } from './pages/Home';
 import { MissionDetail } from './pages/MissionDetail';
 
-// Same base URL used by api.ts
 const BASE = (import.meta.env.VITE_API_URL ?? '') + '/api';
 
-// ─── Open an iOS Shortcut via URL scheme ──────────────────────────────────────
-function triggerShortcut(name: string, input: string) {
-  const url =
-    `shortcuts://run-shortcut?name=${encodeURIComponent(name)}` +
-    (input ? `&input=text&text=${encodeURIComponent(input)}` : '');
+// ─── App name → URL scheme mapping ────────────────────────────────────────────
+const APP_SCHEMES: Record<string, string> = {
+  spotify:    'spotify://',
+  youtube:    'youtube://',
+  instagram:  'instagram://',
+  twitter:    'twitter://',
+  x:          'twitter://',
+  tiktok:     'tiktok://',
+  whatsapp:   'whatsapp://',
+  telegram:   'tg://',
+  facetime:   'facetime://',
+  maps:       'maps://',
+  gmail:      'googlegmail://co',
+  snapchat:   'snapchat://',
+  netflix:    'nflx://',
+  uber:       'uber://',
+  lyft:       'lyft://',
+  linkedin:   'linkedin://',
+  facebook:   'fb://',
+  messenger:  'fb-messenger://',
+  reddit:     'reddit://',
+  discord:    'discord://',
+  airbnb:     'airbnb://',
+  amazon:     'com.amazon.mobile.shopping://',
+  shazam:     'shazam://',
+  clock:      'clock-alarm://',
+  calendar:   'calshow://',
+  notes:      'mobilenotes://',
+  settings:   'App-Prefs:',
+};
 
-  // Create a temporary <a> and click it so WKWebView hands the URL to iOS.
-  // iOS intercepts the custom scheme and opens Shortcuts.app automatically.
+// ─── Navigate to an iOS URL scheme from WKWebView ─────────────────────────────
+function openScheme(url: string) {
   const a = document.createElement('a');
   a.href = url;
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
+}
+
+// ─── Handle phone_action commands from the agent ──────────────────────────────
+interface PhoneActionCmd {
+  type: 'phone_action';
+  action: string;
+  phone?: string;
+  message?: string;
+  to?: string;
+  subject?: string;
+  body?: string;
+  destination?: string;
+  app?: string;
+  url?: string;
+}
+
+function handlePhoneAction(cmd: PhoneActionCmd): string {
+  const e = encodeURIComponent;
+  switch (cmd.action) {
+    case 'whatsapp': {
+      const phone = (cmd.phone ?? '').replace(/^\+/, '');
+      const text  = cmd.message ?? '';
+      // wa.me is the most reliable WhatsApp deep link
+      openScheme(`https://wa.me/${phone}?text=${e(text)}`);
+      return `Opening WhatsApp → ${cmd.phone}`;
+    }
+    case 'call':
+      openScheme(`tel://${cmd.phone ?? ''}`);
+      return `Calling ${cmd.phone}`;
+    case 'sms':
+      openScheme(`sms://${cmd.phone ?? ''}?body=${e(cmd.message ?? '')}`);
+      return `Opening Messages → ${cmd.phone}`;
+    case 'email':
+      openScheme(
+        `mailto:${cmd.to ?? ''}?subject=${e(cmd.subject ?? '')}&body=${e(cmd.body ?? '')}`
+      );
+      return `Opening Mail → ${cmd.to}`;
+    case 'maps':
+      openScheme(`maps://?q=${e(cmd.destination ?? '')}`);
+      return `Opening Maps → ${cmd.destination}`;
+    case 'open_app': {
+      const key = (cmd.app ?? '').toLowerCase();
+      const scheme = APP_SCHEMES[key] ?? `${key}://`;
+      openScheme(scheme);
+      return `Opening ${cmd.app}`;
+    }
+    case 'open_url':
+      openScheme(cmd.url ?? '');
+      return `Opening ${cmd.url}`;
+    default:
+      return `Unknown action: ${cmd.action}`;
+  }
 }
 
 // ─── Phone-connected status dot ───────────────────────────────────────────────
@@ -28,9 +104,7 @@ function PhoneStatus({ connected }: { connected: boolean }) {
       className="fixed top-3 right-3 z-50 flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium"
       style={{ background: 'rgba(15,10,26,0.85)', backdropFilter: 'blur(6px)' }}
     >
-      <span
-        className={`w-2 h-2 rounded-full ${connected ? 'bg-emerald-400 animate-pulse' : 'bg-zinc-600'}`}
-      />
+      <span className={`w-2 h-2 rounded-full ${connected ? 'bg-emerald-400 animate-pulse' : 'bg-zinc-600'}`} />
       <span className={connected ? 'text-emerald-400' : 'text-zinc-500'}>
         {connected ? 'Phone' : 'No phone'}
       </span>
@@ -38,8 +112,8 @@ function PhoneStatus({ connected }: { connected: boolean }) {
   );
 }
 
-// ─── Shortcut toast notification ──────────────────────────────────────────────
-function ShortcutToast({ message }: { message: string | null }) {
+// ─── Action toast ─────────────────────────────────────────────────────────────
+function ActionToast({ message }: { message: string | null }) {
   if (!message) return null;
   return (
     <div className="fixed top-12 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 rounded-full bg-purple-600 px-4 py-2 text-sm text-white shadow-lg whitespace-nowrap">
@@ -52,7 +126,6 @@ function ShortcutToast({ message }: { message: string | null }) {
 function AppShell({ children }: { children: React.ReactNode }) {
   return (
     <div className="flex justify-center min-h-screen bg-gray-950">
-      {/* Phone frame on desktop */}
       <div className="w-full max-w-[430px] relative flex flex-col min-h-screen bg-[#0f0a1a] overflow-hidden shadow-2xl">
         {children}
       </div>
@@ -62,14 +135,14 @@ function AppShell({ children }: { children: React.ReactNode }) {
 
 export default function App() {
   const [phoneConnected, setPhoneConnected] = useState(false);
-  const [shortcutToast, setShortcutToast] = useState<string | null>(null);
+  const [actionToast, setActionToast] = useState<string | null>(null);
   const esRef = useRef<EventSource | null>(null);
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   function showToast(msg: string) {
     if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
-    setShortcutToast(msg);
-    toastTimerRef.current = setTimeout(() => setShortcutToast(null), 3500);
+    setActionToast(msg);
+    toastTimerRef.current = setTimeout(() => setActionToast(null), 4000);
   }
 
   useEffect(() => {
@@ -81,29 +154,22 @@ export default function App() {
 
       es.onmessage = (event) => {
         try {
-          const cmd = JSON.parse(event.data) as {
-            type: string;
-            shortcut?: string;
-            input?: string;
-          };
+          const cmd = JSON.parse(event.data) as { type: string } & PhoneActionCmd;
 
           if (cmd.type === 'connected') {
             setPhoneConnected(true);
           }
 
-          if (cmd.type === 'run_shortcut' && cmd.shortcut) {
-            const name = cmd.shortcut;
-            const input = cmd.input ?? '';
-            triggerShortcut(name, input);
-            showToast(`Running "${name}" on iPhone…`);
+          if (cmd.type === 'phone_action') {
+            const label = handlePhoneAction(cmd);
+            showToast(`⚡ ${label}`);
           }
-        } catch { /* ignore malformed events */ }
+        } catch { /* ignore parse errors */ }
       };
 
       es.onerror = () => {
         setPhoneConnected(false);
         es.close();
-        // Auto-reconnect after 4 s
         setTimeout(connect, 4000);
       };
     }
@@ -120,7 +186,7 @@ export default function App() {
     <BrowserRouter>
       <AppShell>
         <PhoneStatus connected={phoneConnected} />
-        <ShortcutToast message={shortcutToast} />
+        <ActionToast message={actionToast} />
         <Routes>
           <Route path="/" element={<Home />} />
           <Route path="/mission/:id" element={<MissionDetail />} />
