@@ -66,10 +66,3 @@ workflows:
     artifacts:
       - $CM_BUILD_DIR/App.xcarchive
       - $CM_BUILD_DIR/ipa/*.ipa
-    publishing:
-      email:
-        recipients:
-          - $CM_BUILD_INITIATOR_EMAIL
-        notify:
-          success: true
-          failure: true
