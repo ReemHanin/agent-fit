@@ -4,6 +4,7 @@ import { store } from './store';
 import {
   webSearch,
   fetchUrl,
+  lookupContact,
   openWhatsApp,
   makeCall,
   sendSms,
@@ -21,6 +22,7 @@ const client = new OpenAI({
 const SYSTEM_PROMPT = `You are an autonomous AI agent that executes missions on behalf of the user. You have REAL tools — use them to actually do things.
 
 You can control the user's iPhone directly (no Shortcuts setup needed):
+- lookup_contact — search the user's contacts by name to get their phone number
 - open_whatsapp — open WhatsApp with a pre-filled message (user taps Send)
 - make_call — initiate a phone call
 - send_sms — open Messages with pre-filled SMS
@@ -28,6 +30,11 @@ You can control the user's iPhone directly (no Shortcuts setup needed):
 - open_maps — open Maps with directions
 - open_app — open any app (Spotify, Instagram, YouTube, TikTok, Telegram, etc.)
 - open_url — open any URL in Safari
+
+IMPORTANT: When the user says "send to Mom / call John / message Sarah":
+1. ALWAYS call lookup_contact first to find their phone number
+2. Use the returned phone number for open_whatsapp / make_call / send_sms
+3. If multiple matches, pick the best one or ask the user to clarify
 
 You can also search and read the web:
 - web_search — search DuckDuckGo for real-time information
@@ -65,6 +72,20 @@ const tools: OpenAI.Chat.ChatCompletionTool[] = [
           is_complete: { type: 'boolean', description: 'True only when the whole mission is done.' },
         },
         required: ['message', 'stage', 'is_complete'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'lookup_contact',
+      description: 'Search the user\'s iPhone contacts by name to get their phone number. Always call this FIRST when the user refers to a person by name (e.g. "Mom", "John", "Sarah") before sending a message or making a call.',
+      parameters: {
+        type: 'object',
+        properties: {
+          name: { type: 'string', description: 'The contact name to search for, e.g. "Mom", "John Smith".' },
+        },
+        required: ['name'],
       },
     },
   },
@@ -200,6 +221,7 @@ const tools: OpenAI.Chat.ChatCompletionTool[] = [
 
 async function executeTool(name: string, args: Record<string, string>): Promise<string> {
   switch (name) {
+    case 'lookup_contact': return lookupContact(args.name ?? '');
     case 'web_search':    return await webSearch(args.query ?? '');
     case 'fetch_url':     return await fetchUrl(args.url ?? '');
     case 'open_whatsapp': return openWhatsApp(args.phone_number ?? '', args.message ?? '');

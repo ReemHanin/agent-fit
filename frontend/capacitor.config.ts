@@ -13,6 +13,11 @@ const config: CapacitorConfig = {
   ios: {
     backgroundColor: '#0f0a1a',
     contentInset: 'always',
+    infoPlist: {
+      // Required for @capacitor-community/contacts
+      NSContactsUsageDescription:
+        'Agent Fit reads your contacts so the AI agent can send messages to people by name.',
+    },
   },
 };
 

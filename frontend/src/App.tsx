@@ -1,9 +1,47 @@
 import { useEffect, useState, useRef } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { Contacts } from '@capacitor-community/contacts';
 import { Home } from './pages/Home';
 import { MissionDetail } from './pages/MissionDetail';
 
 const BASE = (import.meta.env.VITE_API_URL ?? '') + '/api';
+
+// ─── Sync phone contacts to backend ──────────────────────────────────────────
+async function syncContacts() {
+  try {
+    // Request permission
+    const perm = await Contacts.requestPermissions();
+    if (perm.contacts !== 'granted') return;
+
+    // Read all contacts (name + phones only)
+    const result = await Contacts.getContacts({
+      projection: { name: true, phones: true },
+    });
+
+    // Flatten: one entry per phone number
+    const flat: Array<{ name: string; phone: string }> = [];
+    for (const c of result.contacts) {
+      const name = c.name?.display ?? c.name?.given ?? '';
+      if (!name) continue;
+      for (const p of c.phones ?? []) {
+        if (p.number) flat.push({ name, phone: p.number });
+      }
+    }
+
+    if (flat.length === 0) return;
+
+    await fetch(`${BASE}/contacts`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ contacts: flat }),
+    });
+
+    console.log(`[AgentFit] Synced ${flat.length} contacts to backend`);
+  } catch (e) {
+    // Contacts not available in browser/simulator — ignore silently
+    console.log('[AgentFit] Contacts sync skipped:', e);
+  }
+}
 
 // ─── App name → URL scheme mapping ────────────────────────────────────────────
 const APP_SCHEMES: Record<string, string> = {
@@ -64,9 +102,7 @@ function handlePhoneAction(cmd: PhoneActionCmd): string {
   switch (cmd.action) {
     case 'whatsapp': {
       const phone = (cmd.phone ?? '').replace(/^\+/, '');
-      const text  = cmd.message ?? '';
-      // wa.me is the most reliable WhatsApp deep link
-      openScheme(`https://wa.me/${phone}?text=${e(text)}`);
+      openScheme(`https://wa.me/${phone}?text=${e(cmd.message ?? '')}`);
       return `Opening WhatsApp → ${cmd.phone}`;
     }
     case 'call':
@@ -145,6 +181,12 @@ export default function App() {
     toastTimerRef.current = setTimeout(() => setActionToast(null), 4000);
   }
 
+  // Sync contacts once on app launch
+  useEffect(() => {
+    syncContacts();
+  }, []);
+
+  // Persistent SSE connection for agent → phone commands
   useEffect(() => {
     function connect() {
       const es = new EventSource(`${BASE}/phone/events`);
@@ -156,9 +198,7 @@ export default function App() {
         try {
           const cmd = JSON.parse(event.data) as { type: string } & PhoneActionCmd;
 
-          if (cmd.type === 'connected') {
-            setPhoneConnected(true);
-          }
+          if (cmd.type === 'connected') setPhoneConnected(true);
 
           if (cmd.type === 'phone_action') {
             const label = handlePhoneAction(cmd);

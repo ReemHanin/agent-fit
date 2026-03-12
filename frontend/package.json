@@ -9,6 +9,7 @@
     "cap:open": "npx cap open ios"
   },
   "dependencies": {
+    "@capacitor-community/contacts": "^6.0.2",
     "@capacitor/cli": "^8.2.0",
     "@capacitor/core": "^8.2.0",
     "@capacitor/ios": "^8.2.0",

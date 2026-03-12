@@ -7,6 +7,7 @@ import { store } from './store';
 import { runAgent } from './agent';
 import { Mission } from './types';
 import { phoneBridge } from './phone-bridge';
+import { contactsStore, StoredContact } from './contacts-store';
 
 const groq = new OpenAI({
   apiKey: process.env.GROQ_API_KEY,
@@ -137,6 +138,15 @@ Respond ONLY with a raw JSON object (no markdown, no code fences):
     console.error('Suggest endpoint error:', err);
     return res.status(500).json({ error: err instanceof Error ? err.message : 'Internal server error' });
   }
+});
+
+// ─── Contacts sync — iPhone app posts contacts on launch ─────────────────────
+app.post('/api/contacts', (req, res) => {
+  const { contacts } = req.body as { contacts?: StoredContact[] };
+  if (!Array.isArray(contacts)) return res.status(400).json({ error: 'contacts array required' });
+  contactsStore.setContacts(contacts);
+  console.log(`📇 Contacts synced: ${contactsStore.count()} entries`);
+  res.json({ ok: true, count: contactsStore.count() });
 });
 
 // ─── Phone bridge: iPhone app connects here to receive shortcut commands ───────

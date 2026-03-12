@@ -1,4 +1,5 @@
 import { phoneBridge } from './phone-bridge';
+import { contactsStore } from './contacts-store';
 
 // ─── Web Search ────────────────────────────────────────────────────────────────
 
@@ -107,6 +108,31 @@ export async function fetchUrl(url: string): Promise<string> {
   } catch (e) {
     return `Fetch error: ${e instanceof Error ? e.message : String(e)}`;
   }
+}
+
+// ─── Contact lookup ────────────────────────────────────────────────────────────
+
+/**
+ * Search the user's synced contacts by name.
+ * Returns matching contacts with their phone numbers.
+ */
+export function lookupContact(name: string): string {
+  if (contactsStore.count() === 0) {
+    return (
+      '⚠️ No contacts synced yet. ' +
+      'Open the Agent Fit app on the iPhone to sync contacts, then try again.'
+    );
+  }
+
+  const matches = contactsStore.lookup(name);
+  if (matches.length === 0) {
+    return `No contact found for "${name}". Ask the user for the phone number directly.`;
+  }
+
+  const lines = matches
+    .slice(0, 5) // top 5 matches
+    .map(c => `• ${c.name}: ${c.phone}`);
+  return `Found ${matches.length} match(es) for "${name}":\n${lines.join('\n')}`;
 }
 
 // ─── Phone Actions (direct URL scheme — no Shortcuts needed) ──────────────────
