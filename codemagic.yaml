@@ -24,10 +24,12 @@ workflows:
           npm run build
       - name: Add Capacitor iOS platform (skip if already exists)
         script: |
+          . ~/.nvm/nvm.sh
           cd frontend
           npx cap add ios 2>/dev/null || echo "iOS platform already exists"
       - name: Sync Capacitor with built web assets
         script: |
+          . ~/.nvm/nvm.sh
           cd frontend
           npx cap sync ios
       - name: Set bundle identifier
