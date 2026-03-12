@@ -6,7 +6,7 @@ workflows:
       xcode: latest
       node: "20"
       vars:
-        VITE_API_URL: $VITE_API_URL  # set this in Codemagic dashboard environment variables
+        VITE_API_URL: https://agent-fit-production.up.railway.app
     triggering:
       events:
         - push
