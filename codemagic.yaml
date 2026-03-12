@@ -1,0 +1,75 @@
+workflows:
+  ios-build:
+    name: Agent Fit iOS
+    max_build_duration: 60
+    environment:
+      xcode: latest
+      node: "20"
+      vars:
+        VITE_API_URL: $VITE_API_URL  # set this in Codemagic dashboard environment variables
+    triggering:
+      events:
+        - push
+      branch_patterns:
+        - pattern: main
+          include: true
+    scripts:
+      - name: Install frontend dependencies
+        script: |
+          cd frontend
+          npm install
+      - name: Build Vite app (bakes VITE_API_URL into bundle)
+        script: |
+          cd frontend
+          npm run build
+      - name: Add Capacitor iOS platform (skip if already exists)
+        script: |
+          cd frontend
+          npx cap add ios 2>/dev/null || echo "iOS platform already exists"
+      - name: Sync Capacitor with built web assets
+        script: |
+          cd frontend
+          npx cap sync ios
+      - name: Set bundle identifier
+        script: |
+          cd frontend/ios/App
+          xcrun agvtool new-version -all 1
+      - name: Build iOS archive
+        script: |
+          cd frontend/ios/App
+          xcodebuild \
+            -scheme App \
+            -configuration Release \
+            -destination "generic/platform=iOS" \
+            -archivePath $CM_BUILD_DIR/App.xcarchive \
+            archive \
+            CODE_SIGN_STYLE=Automatic \
+            DEVELOPMENT_TEAM=$APPLE_TEAM_ID
+      - name: Export IPA
+        script: |
+          xcodebuild \
+            -exportArchive \
+            -archivePath $CM_BUILD_DIR/App.xcarchive \
+            -exportPath $CM_BUILD_DIR/ipa \
+            -exportOptionsPlist /dev/stdin <<EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>method</key>
+            <string>development</string>
+            <key>teamID</key>
+            <string>$APPLE_TEAM_ID</string>
+          </dict>
+          </plist>
+          EOF
+    artifacts:
+      - $CM_BUILD_DIR/App.xcarchive
+      - $CM_BUILD_DIR/ipa/*.ipa
+    publishing:
+      email:
+        recipients:
+          - $EMAIL  # set your email in Codemagic dashboard vars
+        notify:
+          success: true
+          failure: true
