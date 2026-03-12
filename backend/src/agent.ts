@@ -1,8 +1,11 @@
-import Anthropic from '@anthropic-ai/sdk';
+import OpenAI from 'openai';
 import { v4 as uuidv4 } from 'uuid';
 import { store } from './store';
 
-const client = new Anthropic();
+const client = new OpenAI({
+  apiKey: process.env.GROQ_API_KEY,
+  baseURL: 'https://api.groq.com/openai/v1'
+});
 
 const SYSTEM_PROMPT = `You are an autonomous AI agent executing missions assigned by users.
 
@@ -22,28 +25,31 @@ Guidelines for notifications:
 
 You have full autonomy to decide how to approach the mission. Think creatively and work through it step by step.`;
 
-const tools: Anthropic.Tool[] = [
+const tools: OpenAI.Chat.ChatCompletionTool[] = [
   {
-    name: 'notify_user',
-    description: 'Send a progress update or completion notification to the user about the mission',
-    input_schema: {
-      type: 'object' as const,
-      properties: {
-        message: {
-          type: 'string',
-          description: 'The message to send to the user — be specific and informative'
+    type: 'function',
+    function: {
+      name: 'notify_user',
+      description: 'Send a progress update or completion notification to the user about the mission',
+      parameters: {
+        type: 'object',
+        properties: {
+          message: {
+            type: 'string',
+            description: 'The message to send to the user — be specific and informative'
+          },
+          stage: {
+            type: 'string',
+            enum: ['starting', 'analyzing', 'researching', 'planning', 'executing', 'reviewing', 'completing'],
+            description: 'The current stage of the mission'
+          },
+          is_complete: {
+            type: 'boolean',
+            description: 'Set to true ONLY when the entire mission is fully complete'
+          }
         },
-        stage: {
-          type: 'string',
-          enum: ['starting', 'analyzing', 'researching', 'planning', 'executing', 'reviewing', 'completing'],
-          description: 'The current stage of the mission'
-        },
-        is_complete: {
-          type: 'boolean',
-          description: 'Set to true ONLY when the entire mission is fully complete'
-        }
-      },
-      required: ['message', 'stage', 'is_complete']
+        required: ['message', 'stage', 'is_complete']
+      }
     }
   }
 ];
@@ -70,11 +76,9 @@ export async function runAgent(missionId: string): Promise<void> {
 
   addMsg('status', 'Agent is initializing...');
 
-  const messages: Anthropic.MessageParam[] = [
-    {
-      role: 'user',
-      content: `Execute this mission: ${mission.description}`
-    }
+  const messages: OpenAI.Chat.ChatCompletionMessageParam[] = [
+    { role: 'system', content: SYSTEM_PROMPT },
+    { role: 'user', content: `Execute this mission: ${mission.description}` }
   ];
 
   let isComplete = false;
@@ -85,60 +89,49 @@ export async function runAgent(missionId: string): Promise<void> {
     while (!isComplete && iterations < maxIterations) {
       iterations++;
 
-      const response = await client.messages.create({
-        model: 'claude-opus-4-5',
+      const response = await client.chat.completions.create({
+        model: 'llama-3.3-70b-versatile',
         max_tokens: 8192,
-        system: SYSTEM_PROMPT,
         tools,
         messages
       });
 
+      const assistantMessage = response.choices[0].message;
+
       // Append assistant response to conversation history
-      messages.push({ role: 'assistant', content: response.content });
+      messages.push(assistantMessage);
 
       // Process tool calls
-      const toolResults: Anthropic.ToolResultBlockParam[] = [];
+      if (assistantMessage.tool_calls && assistantMessage.tool_calls.length > 0) {
+        for (const toolCall of assistantMessage.tool_calls) {
+          if (toolCall.function.name === 'notify_user') {
+            const input = JSON.parse(toolCall.function.arguments) as {
+              message: string;
+              stage: string;
+              is_complete: boolean;
+            };
 
-      for (const block of response.content) {
-        if (block.type === 'tool_use' && block.name === 'notify_user') {
-          const input = block.input as {
-            message: string;
-            stage: string;
-            is_complete: boolean;
-          };
+            if (input.is_complete) {
+              addMsg('result', input.message, input.stage);
+              isComplete = true;
+            } else {
+              addMsg('progress', input.message, input.stage);
+            }
 
-          if (input.is_complete) {
-            addMsg('result', input.message, input.stage);
-            isComplete = true;
-          } else {
-            addMsg('progress', input.message, input.stage);
+            // Feed result back so the model can continue
+            messages.push({
+              role: 'tool',
+              tool_call_id: toolCall.id,
+              content: 'Notification delivered to user successfully.'
+            });
           }
-
-          toolResults.push({
-            type: 'tool_result',
-            tool_use_id: block.id,
-            content: 'Notification delivered to user successfully.'
-          });
         }
       }
 
-      if (toolResults.length > 0) {
-        messages.push({ role: 'user', content: toolResults });
-      }
-
-      // If Claude finished without calling complete, treat last text as result
-      if (response.stop_reason === 'end_turn' && !isComplete) {
-        const text = response.content
-          .filter((b): b is Anthropic.TextBlock => b.type === 'text')
-          .map(b => b.text)
-          .join('\n')
-          .trim();
-
-        if (text) {
-          addMsg('result', text, 'completing');
-        } else {
-          addMsg('result', 'Mission completed successfully.', 'completing');
-        }
+      // If model finished without calling complete, treat last text as result
+      if (response.choices[0].finish_reason === 'stop' && !isComplete) {
+        const text = assistantMessage.content?.trim() ?? '';
+        addMsg('result', text || 'Mission completed successfully.', 'completing');
         isComplete = true;
       }
     }

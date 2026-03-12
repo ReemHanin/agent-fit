@@ -2,12 +2,15 @@ import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
 import { v4 as uuidv4 } from 'uuid';
-import Anthropic from '@anthropic-ai/sdk';
+import OpenAI from 'openai';
 import { store } from './store';
 import { runAgent } from './agent';
 import { Mission } from './types';
 
-const anthropic = new Anthropic();
+const groq = new OpenAI({
+  apiKey: process.env.GROQ_API_KEY,
+  baseURL: 'https://api.groq.com/openai/v1'
+});
 
 const app = express();
 const PORT = parseInt(process.env.PORT ?? '3001', 10);
@@ -89,10 +92,13 @@ app.post('/api/suggest', async (req, res) => {
   if (!transcript?.trim()) return res.status(400).json({ error: 'Transcript is required' });
 
   try {
-    const message = await anthropic.messages.create({
-      model: 'claude-haiku-4-5',
+    const message = await groq.chat.completions.create({
+      model: 'llama-3.3-70b-versatile',
       max_tokens: 512,
-      system: `You are a mission description assistant. The user dictated a voice note describing something they want an AI agent to do.
+      messages: [
+        {
+          role: 'system',
+          content: `You are a mission description assistant. The user dictated a voice note describing something they want an AI agent to do.
 Your task:
 1. Remove filler words (um, uh, like, you know, etc.)
 2. Fix grammar/clarity from speech-to-text artifacts
@@ -100,17 +106,19 @@ Your task:
 4. Generate a short title (max 60 chars) capturing the core goal
 
 Respond ONLY with a raw JSON object (no markdown, no code fences):
-{"title": "...", "description": "..."}`,
-      messages: [{ role: 'user', content: `Raw voice transcript: ${transcript.trim()}` }],
+{"title": "...", "description": "..."}`
+        },
+        { role: 'user', content: `Raw voice transcript: ${transcript.trim()}` }
+      ],
     });
 
-    const textBlock = message.content.find(b => b.type === 'text');
-    if (!textBlock || textBlock.type !== 'text') {
+    const textBlock = message.choices[0].message.content;
+    if (!textBlock) {
       return res.status(502).json({ error: 'No text response from model' });
     }
 
     // Strip markdown code fences in case the model includes them despite instructions
-    const raw = textBlock.text.trim()
+    const raw = textBlock.trim()
       .replace(/^```(?:json)?\n?/, '')
       .replace(/\n?```$/, '');
 
